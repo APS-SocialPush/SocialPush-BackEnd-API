@@ -9,10 +9,25 @@ https://docs.djangoproject.com/en/5.0/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.0/ref/settings/
 """
+from __future__ import absolute_import, unicode_literals
 
 import os
 from pathlib import Path
 from decouple import Config, RepositoryEnv
+from celery import Celery
+
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'backend.settings')
+
+app = Celery('backend')
+
+app.config_from_object('django.conf:settings', namespace='CELERY')
+
+app.autodiscover_tasks()
+
+
+@app.task(bind=True)
+def debug_task(self):
+    print(f'Request: {self.request!r}')
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -24,11 +39,17 @@ config = Config(RepositoryEnv(relative_dotenv_file))
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
 
+# Twitter credentials
+API_KEY = 'lJI4qEGsSolYyk24tWY02iDgw'
+API_KEY_SECRET = 'w9awShQWM3VOFYTpk9mieSUBPkERy3VMYJKSRaa1mXdOvpsB7y'
+ACCESS_TOKEN = '1778030890192412672-8P8qDYqQUr8Eb3ogatsZzMqKx8Uk5g'
+ACCESS_TOKEN_SECRET = 'f0lKjBKJc8S7K4NadrNGgE8TL7NUbsZeyt5j7CW7RmIhX'
+
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = config('SECRET_KEY')
 DEBUG = config('DEBUG', default=True, cast=bool)
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['*']
 
 # Application definition
 
@@ -41,14 +62,15 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     #libs
     "rest_framework",
-    "rest_framework.authtoken",
     "drf_spectacular",
     "corsheaders",
+    "social_django",
+    "djoser",
     #apps
-    'apps.socialmedia',
-    'apps.scheduling',
-    'apps.authentication',
-    'apps.metrics',
+    "socialmedia",
+    "scheduling",
+    # "apps.metrics",
+    "users"
 ]
 
 MIDDLEWARE = [
@@ -60,7 +82,23 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    "social_django.middleware.SocialAuthExceptionMiddleware",
 ]
+
+CORS_ALLOWED_ORIGINS = ['http://localhost:3000']
+CORS_ALLOW_CREDENTIALS = True
+
+REST_FRAMEWORK = {
+    # YOUR SETTINGS
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "rest_framework.authentication.SessionAuthentication",
+        "rest_framework.authentication.BasicAuthentication",
+    ],
+    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.LimitOffsetPagination",
+    "PAGE_SIZE": 10,
+}
 
 ROOT_URLCONF = 'backend.urls'
 
@@ -75,13 +113,14 @@ TEMPLATES = [
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
+                "social_django.context_processors.backends",
+                "social_django.context_processors.login_redirect",
             ],
         },
     },
 ]
 
 WSGI_APPLICATION = 'backend.wsgi.application'
-
 
 # Database
 # https://docs.djangoproject.com/en/5.0/ref/settings/#databases
@@ -93,9 +132,10 @@ DATABASES = {
     }
 }
 
-
 # Password validation
 # https://docs.djangoproject.com/en/5.0/ref/settings/#auth-password-validators
+
+AUTH_USER_MODEL = "users.CustomUser"
 
 AUTH_PASSWORD_VALIDATORS = [
     {
@@ -112,18 +152,71 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
+white_list = ['http://127.0.0.1:8000/api/auth/social/o/google-oauth2/', 'http://127.0.0.1:8000/api/accounts/users/',
+              'http://localhost:3000']
+
+DJOSER = {
+    "LOGIN_FIELD": "email",
+    "USER_CREATE_PASSWORD_RETYPE": True,
+    "USERNAME_CHANGED_EMAIL_CONFIRMATION": True,
+    "PASSWORD_CHANGED_EMAIL_CONFIRMATION": True,
+    "SEND_CONFIRMATION_EMAIL": True,
+    "SET_PASSWORD_RETYPE": True,
+    "PASSWORD_RESET_CONFIRM_URL": "password/reset/confirm/{uid}/{token}",
+    "ACTIVATION_URL": "activate/{uid}/{token}",
+    "SEND_ACTIVATION_EMAIL": True,
+    "SOCIAL_AUTH_TOKEN_STRATEGY": "djoser.social.token.jwt.TokenStrategy",
+    "SOCIAL_AUTH_ALLOWED_REDIRECT_URIS": white_list,
+    "SERIALIZERS": {
+        "user_create": "users.api.serializers.user_custom_serializer.CustomUserSerializer",
+        "user": "users.api.serializers.user_custom_serializer.CustomUserSerializer",
+        "current_user": "users.api.serializers.user_custom_serializer.CustomUserSerializer",
+        "user_delete": "djoser.serializers.UserDeleteSerializer",
+    },
+}
+
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'SocialPush',
+    'DESCRIPTION': 'Sistema para o gerenciamento de postagens em redes sociais',
+    'VERSION': '1.0.0',
+    'SERVE_INCLUDE_SCHEMA': False,
+    # OTHER SETTINGS
+}
+
+EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+EMAIL_HOST = "smtp.gmail.com"
+EMAIL_PORT = config("EMAIL_PORT", default=587)
+EMAIL_HOST_USER = config("EMAIL_HOST_USER")
+EMAIL_HOST_PASSWORD = config("EMAIL_HOST_PASSWORD")
+EMAIL_USE_TLS = True
+
+AUTHENTICATION_BACKENDS = (
+    "django.contrib.auth.backends.ModelBackend",
+    "social_core.backends.google.GoogleOAuth2",
+    # "social_core.backends.amazon.AmazonOAuth2",
+    # Isso é necessário para garantir que a autenticação de token normal funcione junto com a autenticação social.
+)
+
+SOCIAL_AUTH_GOOGLE_OAUTH2_KEY = config("GOOGLE_CLIENT_ID")
+SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET = config("GOOGLE_SECRET")
+SOCIAL_AUTH_GOOGLE_OAUTH2_SCOPE = [
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
+    "openid",
+]
+SOCIAL_AUTH_GOOGLE_OAUTH2_EXTRA_DATA = ["Leonardo", "Dantas"]
+
+CELERY_BROKER_URL = 'redis://localhost:6379/0'
+CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'
 
 # Internationalization
 # https://docs.djangoproject.com/en/5.0/topics/i18n/
 
-LANGUAGE_CODE = 'en-us'
-
-TIME_ZONE = 'UTC'
+LANGUAGE_CODE = "pt-br"
+TIME_ZONE = "America/Sao_Paulo"
 
 USE_I18N = True
-
 USE_TZ = True
-
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.0/howto/static-files/
